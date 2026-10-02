@@ -1,0 +1,11 @@
+{
+  "name": "matcha-minute",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A 90-second matcha cafe arcade game, with no runtime dependencies.",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "test": "node tests/game.test.mjs",
+    "deploy": "npx wrangler@4 pages deploy"
+  }
+}

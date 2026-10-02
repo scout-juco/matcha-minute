@@ -1,0 +1,68 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Matcha Minute browser checks</title>
+<style>body{font:14px system-ui;background:#f6f3e8;color:#294b3b;margin:20px}button{padding:12px;background:#416748;color:white;border:0;border-radius:8px}pre{white-space:pre-wrap;font-size:12px}iframe{width:min(1200px,100%);height:1100px;border:1px solid #aaa}</style>
+<h1>Browser interaction checks</h1><button id="run">Run browser checks</button> <button id="clear">Clear local test best</button><pre id="log">Ready. This development-only page tests the actual game through DOM input events.</pre><iframe id="game" src="/"></iframe>
+<script>
+const log = document.querySelector('#log'), frame = document.querySelector('#game');
+if(location.search.includes('mobile'))frame.style.width='390px';
+document.querySelector('#clear').onclick=()=>{frame.contentWindow.localStorage.removeItem('matcha-minute-best');log.textContent+='\nLocal test best cleared.';};
+const wait = ms => new Promise(r=>setTimeout(r,ms));
+const check = (value,name) => { if(!value)throw Error(name);log.textContent+='\nPASS '+name; };
+document.querySelector('#run').onclick=async()=>{
+ document.querySelector('#run').disabled=true;log.textContent='Running…';let restoreBest=()=>{};
+ try {
+ const w=frame.contentWindow,d=w.document,$=id=>d.getElementById(id);
+ const priorBest=w.localStorage.getItem('matcha-minute-best');restoreBest=()=>{if(priorBest===null)w.localStorage.removeItem('matcha-minute-best');else w.localStorage.setItem('matcha-minute-best',priorBest);};
+ // Synthetic pointer events cannot own native pointer capture. Only this test iframe is stubbed.
+ w.Element.prototype.setPointerCapture=function(){};
+ const click=id=>$(id).click();
+ const key=(el,type)=>el.dispatchEvent(new w.KeyboardEvent(type,{code:'Space',key:' ',bubbles:true,cancelable:true}));
+ const until=async(fn,timeout=6000)=>{const start=performance.now();while(!fn()){if(performance.now()-start>timeout)throw Error('Timed out awaiting visible game state');await wait(20);}};
+ const drag=(type,targetId='cupTarget')=>{
+   const from=d.querySelector(`[data-ingredient="${type}"]`),to=$(targetId),a=from.getBoundingClientRect(),b=to.getBoundingClientRect();
+   from.dispatchEvent(new w.PointerEvent('pointerdown',{button:0,pointerId:1,clientX:a.x+a.width/2,clientY:a.y+a.height/2,bubbles:true,cancelable:true}));
+   d.dispatchEvent(new w.PointerEvent('pointermove',{pointerId:1,clientX:b.x+b.width/2,clientY:b.y+b.height/2,bubbles:true}));
+   d.dispatchEvent(new w.PointerEvent('pointerup',{pointerId:1,clientX:b.x+b.width/2,clientY:b.y+b.height/2,bubbles:true}));
+ };
+ const brew=async(scoops,water,circular=false)=>{
+   for(let i=0;i<scoops;i++)drag('powder','bowl');
+   check($('bowlLabel').textContent===`${scoops} / ${scoops} scoops`,'Drag powder into bowl');
+   const pitcher=$('waterButton');key(pitcher,'keydown');await until(()=>parseInt($('meterValue').textContent)>=water);key(pitcher,'keyup');
+   check($('meterTitle').textContent==='Whisk it smooth','Hold and release reaches water target');
+   if(circular){
+     const bowl=$('bowl'),b=bowl.getBoundingClientRect(),center={x:b.x+b.width/2,y:b.y+b.height*.36};
+     const event=(type,angle)=>new w.PointerEvent(type,{button:0,pointerId:2,clientX:center.x+Math.cos(angle)*b.width*.27,clientY:center.y+Math.sin(angle)*b.height*.16,bubbles:true,cancelable:true});
+     bowl.dispatchEvent(event('pointerdown',0));
+     for(let a=.35;a<14&&$('nextButton').disabled;a+=.35){await wait(70);bowl.dispatchEvent(event('pointermove',a));}
+     d.dispatchEvent(new w.PointerEvent('pointerup',{pointerId:2,bubbles:true}));
+   }else{const bowl=$('bowl');key(bowl,'keydown');await until(()=>!$('nextButton').disabled);key(bowl,'keyup');}
+   check(!$('nextButton').disabled,circular?'Steady circular pointer whisk completes brewing':'Keyboard whisk completes brewing');
+ };
+ click('practiceButton');await wait(100);
+ check($('timer').textContent==='∞','Practice has no countdown');
+ await brew(2,60);
+ click('nextButton');drag('oat');check($('toast').textContent.includes('doesn’t need oat milk')&&!d.querySelector('[data-ingredient="oat"]').disabled,'Wrong milk is rejected with clear feedback');
+ drag('ice');drag('milk');drag('matcha');check(!$('nextButton').disabled,'Classic build accepts drag-and-drop ingredients');
+ click('nextButton');drag('lid');check(!$('nextButton').disabled,'Classic finish needs a lid');click('nextButton');
+ check($('served').textContent==='1'&&Number($('score').textContent)>100,'Serving awards coins and tips');
+ click('startTimed');await wait(100);
+ drag('powder','bowl');d.querySelector('[data-order="2"]').click();drag('powder','bowl');d.querySelector('[data-order="1"]').click();
+ check($('bowlLabel').textContent==='1 / 2 scoops','Switching tickets preserves each drink');
+ click('resetDrink');await brew(2,60,true);click('nextButton');
+ drag('ice');drag('oat');drag('strawberry');drag('matcha');click('nextButton');
+ drag('lid');check($('nextButton').disabled,'Lid cannot skip requested cream');drag('cream');drag('lid');click('nextButton');
+ check($('served').textContent==='1','Strawberry drink can be served');
+ click('pauseButton');const paused=$('timer').textContent;await wait(1100);check($('timer').textContent===paused,'Pause freezes round time');click('resumeButton');
+ await until(()=>$('timer').textContent!==paused,2000);check(true,'Resume restarts timer');
+ if(location.search.includes('mobile')){click('pauseButton');log.textContent+='\nALL MOBILE BROWSER CHECKS PASSED';return;}
+ // Allow the remaining real-time round to finish, verifying expiry and results as well.
+ log.textContent+='\nWaiting for the real 90-second round to finish…';
+ await until(()=>$('replayButton'),95000);
+ check($('timer').textContent==='0:00','Round ends at zero');
+ check(d.querySelector('.result-total').textContent=== $('score').textContent,'Results display the earned score');
+ check(Number(d.querySelector('.result-stat:last-child strong').textContent)>0,'Unserved customers expire');
+ check(Number($('best').textContent)>=Number($('score').textContent),'Personal best updated');
+ click('replayButton');check($('score').textContent==='0'&&$('served').textContent==='0','Replay resets score and drinks');
+ click('pauseButton');log.textContent+='\nALL BROWSER CHECKS PASSED';
+ }catch(error){log.textContent+='\nFAIL '+error.message;console.error(error);}finally{restoreBest();document.querySelector('#run').disabled=false;}
+};
+</script></html>
